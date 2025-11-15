@@ -1,6 +1,6 @@
 # ADS - Algorithms and Data Structures Library
 
-A high-performance, state-of-the-art algorithms and data structures library written in C.
+A high-performance algorithms and data structures library written in C.
 
 ## Features
 
