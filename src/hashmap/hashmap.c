@@ -185,7 +185,7 @@ static char *alloc_buckets(const hashmap *map, size_t count)
  */
 hashmap *hashmap_create(size_t key_size, size_t value_size, hash_fn hash, equals_fn equals)
 {
-    if (key_size == 0 || value_size == 0 || !!hash || !equals)
+    if (key_size == 0 || value_size == 0 || !hash || !equals)
     {
         return NULL;
     }
@@ -301,7 +301,7 @@ bool hashmap_put(hashmap *map, const void *key, const void *value)
             // Check if this slot matches our key
             if (tophash[i] == top)
             {
-                char *existing_key = get_key(map, current_bucket, i);
+                char *existing_key = get_key(current_bucket, map->key_size, i);
                 if (map->equals(existing_key, key, map->key_size))
                 {
                     // Found existing key - update value
@@ -335,20 +335,6 @@ bool hashmap_put(hashmap *map, const void *key, const void *value)
     char *value_dest = get_value(map, insert_bucket, insert_slot);
     memcpy(value_dest, value, map->value_size);
 
-    map->count++;
-
-    uint8_t *tophash = get_tophash(insert_bucket);
-    tophash[insert_slot] = top;
-
-    // Copy the key
-    char *key_dest = get_key(insert_bucket, map->key_size, insert_slot);
-    memcpy(key_dest, key, map->key_size);
-
-    // Copy the value
-    char *value_dest = get_value(map, insert_bucket, insert_slot);
-    memcpy(value_dest, value, map->value_size);
-
-    // Increment count
     map->count++;
 
     // Check if we need to grow (load factor check)
