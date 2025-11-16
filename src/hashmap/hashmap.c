@@ -73,10 +73,10 @@ static inline char *get_keys(char *bucket)
 /**
  * Get pointer to the i-th key within a bucket
  */
-static inline char *get_key(const hashmap *map, char *bucket, size_t index)
+static inline char *get_key(char *bucket, size_t key_size, size_t index)
 {
     assert(index < BUCKET_SIZE);
-    return get_keys(bucket) + (index * map->key_size);
+    return get_keys(bucket) + (index * key_size);
 }
 
 /**
@@ -261,6 +261,9 @@ void hashmap_destroy(hashmap *map)
     free(map);
 }
 
+/**
+ * Put a key and value pair into the map
+ */
 bool hashmap_put(hashmap *map, const void *key, const void *value)
 {
     if (!map || !key || !value)
@@ -274,5 +277,88 @@ bool hashmap_put(hashmap *map, const void *key, const void *value)
 
     char *bucket = get_bucket(map, map->buckets, idx);
     char *insert_bucket = bucket;
-    int
+    int insert_slot = -1;
+
+    char *current = bucket;
+    while (current)
+    {
+        uint8_t *tophash = get_tophash(current);
+        for (int i = 0; i < BUCKET_SIZE; i++)
+        {
+            // Remember first empty slot we find
+            if (tophash[i] == EMPTY)
+            {
+                if (insert_slot == -1)
+                {
+                    insert_bucket = current;
+                    insert_slot = i;
+                }
+                // Continue searching for existing key
+                continue;
+            }
+
+            // Check if this slot matches our key
+            if (tophash[i] == top)
+            {
+                char *existing_key = get_key(map, current, i);
+                if (map->equals(existing_key, key, map->key_size))
+                {
+                    // Found existing key - update value
+                    char *existing_value = get_value(map, current, i);
+                    memcpy(existing_value, value, map->value_size);
+                    return true;
+                }
+            }
+        }
+        current = get_overflow(map, current);
+    }
+
+    if (insert_slot == -1)
+    {
+        char *overflow = alloc_bucket(map);
+        if (!overflow)
+        {
+            return false;
+        }
+        current = bucket;
+        while (get_overflow(map, current))
+        {
+            current = get_overflow(map, current);
+        }
+        set_overflow(map, current, overflow);
+        insert_bucket = overflow;
+        insert_slot = 0;
+    }
+    uint8_t *tophash = get_tophash(insert_bucket);
+    tophash[insert_slot] = top;
+
+    char *key_dest = get_key(insert_bucket, map->key_size, insert_slot);
+    memcpy(key_dest, key, map->key_size);
+
+    char *value_dest = get_value(map, insert_bucket, insert_slot);
+    memcpy(value_dest, value, map->value_size);
+
+    map->count++;
+
+    uint8_t *tophash = get_tophash(insert_bucket);
+    tophash[insert_slot] = top;
+
+    // Copy the key
+    char *key_dest = get_key(insert_bucket, map->key_size, insert_slot);
+    memcpy(key_dest, key, map->key_size);
+
+    // Copy the value
+    char *value_dest = get_value(map, insert_bucket, insert_slot);
+    memcpy(value_dest, value, map->value_size);
+
+    // Increment count
+    map->count++;
+
+    // Check if we need to grow (load factor check)
+    if (map->count * LOAD_FACTOR_DENOMINATOR >
+        map->bucket_count * BUCKET_SIZE * LOAD_FACTOR_NUMERATOR)
+    {
+        // TODO: Implement growth/rehashing
+    }
+    return true;
 }
