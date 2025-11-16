@@ -279,10 +279,11 @@ bool hashmap_put(hashmap *map, const void *key, const void *value)
     char *insert_bucket = bucket;
     int insert_slot = -1;
 
-    char *current = bucket;
-    while (current)
+    char *current_bucket = bucket;
+    char *last_bucket = bucket;
+    while (current_bucket)
     {
-        uint8_t *tophash = get_tophash(current);
+        uint8_t *tophash = get_tophash(current_bucket);
         for (int i = 0; i < BUCKET_SIZE; i++)
         {
             // Remember first empty slot we find
@@ -290,7 +291,7 @@ bool hashmap_put(hashmap *map, const void *key, const void *value)
             {
                 if (insert_slot == -1)
                 {
-                    insert_bucket = current;
+                    insert_bucket = current_bucket;
                     insert_slot = i;
                 }
                 // Continue searching for existing key
@@ -300,17 +301,18 @@ bool hashmap_put(hashmap *map, const void *key, const void *value)
             // Check if this slot matches our key
             if (tophash[i] == top)
             {
-                char *existing_key = get_key(map, current, i);
+                char *existing_key = get_key(map, current_bucket, i);
                 if (map->equals(existing_key, key, map->key_size))
                 {
                     // Found existing key - update value
-                    char *existing_value = get_value(map, current, i);
+                    char *existing_value = get_value(map, current_bucket, i);
                     memcpy(existing_value, value, map->value_size);
                     return true;
                 }
             }
         }
-        current = get_overflow(map, current);
+        last_bucket = current_bucket;
+        current_bucket = get_overflow(map, current_bucket);
     }
 
     if (insert_slot == -1)
@@ -320,12 +322,7 @@ bool hashmap_put(hashmap *map, const void *key, const void *value)
         {
             return false;
         }
-        current = bucket;
-        while (get_overflow(map, current))
-        {
-            current = get_overflow(map, current);
-        }
-        set_overflow(map, current, overflow);
+        set_overflow(map, last_bucket, overflow);
         insert_bucket = overflow;
         insert_slot = 0;
     }
