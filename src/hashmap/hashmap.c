@@ -36,26 +36,39 @@ struct hashmap
 /**
  * Calculate the total size of a single bucket in bytes
  * Layout: [tophash:8][keys:8*key_size][values:8*value_size][overflow:8]
+ *
+ * @param key_size Size of keys in bytes
+ * @param value_size Size of values in bytes
+ * @return Total size of one bucket in bytes
  */
-static inline size_t calc_bucket_size(const hashmap *map)
+static inline size_t calc_bucket_size(size_t key_size, size_t value_size)
 {
-    return 8 +                             // tophash array
-           BUCKET_SIZE * map->key_size +   // keys
-           BUCKET_SIZE * map->value_size + // values
+    return BUCKET_SIZE * sizeof(uint8_t) + // tophash array: 8 × 1 byte
+           BUCKET_SIZE * key_size +        // keys: 8 × key_size
+           BUCKET_SIZE * value_size +      // values: 8 × value_size
            sizeof(char *);                 // overflow pointer
 }
 
 /**
  * Get pointer to the i-th bucket in the bucket array
+ *
+ * @param buckets Pointer to the bucket array
+ * @param key_size Size of keys in bytes
+ * @param value_size Size of values in bytes
+ * @param index Index of the bucket to retrieve
+ * @return Pointer to the specified bucket
  */
-static inline char *get_bucket(const hashmap *map, char *buckets, size_t index)
+static inline char *get_bucket(char *buckets, size_t key_size, size_t value_size, size_t index)
 {
-    size_t bsize = calc_bucket_size(map);
+    size_t bsize = calc_bucket_size(key_size, value_size);
     return buckets + (index * bsize);
 }
 
 /**
  * Get pointer to tophash array within a bucket
+ *
+ * @param bucket Pointer to the bucket
+ * @return Pointer to the tophash array (8 bytes)
  */
 static inline uint8_t *get_tophash(char *bucket)
 {
@@ -64,6 +77,9 @@ static inline uint8_t *get_tophash(char *bucket)
 
 /**
  * Get pointer to keys array within a bucket
+ *
+ * @param bucket Pointer to the bucket
+ * @return Pointer to the start of the keys array
  */
 static inline char *get_keys(char *bucket)
 {
@@ -72,6 +88,11 @@ static inline char *get_keys(char *bucket)
 
 /**
  * Get pointer to the i-th key within a bucket
+ *
+ * @param bucket Pointer to the bucket
+ * @param key_size Size of keys in bytes
+ * @param index Index of the key (0-7)
+ * @return Pointer to the specified key
  */
 static inline char *get_key(char *bucket, size_t key_size, size_t index)
 {
@@ -81,49 +102,78 @@ static inline char *get_key(char *bucket, size_t key_size, size_t index)
 
 /**
  * Get pointer to values array within a bucket
+ *
+ * @param bucket Pointer to the bucket
+ * @param key_size Size of keys in bytes
+ * @return Pointer to the start of the values array
  */
-static inline char *get_values(const hashmap *map, char *bucket)
+static inline char *get_values(char *bucket, size_t key_size)
 {
-    return bucket + 8 + (BUCKET_SIZE * map->key_size);
+    return bucket + 8 + (BUCKET_SIZE * key_size);
 }
 
 /**
  * Get pointer to the i-th value within a bucket
+ *
+ * @param bucket Pointer to the bucket
+ * @param key_size Size of keys in bytes
+ * @param value_size Size of values in bytes
+ * @param index Index of the value (0-7)
+ * @return Pointer to the specified value
  */
-static inline char *get_value(const hashmap *map, char *bucket, size_t index)
+static inline char *get_value(char *bucket, size_t key_size, size_t value_size, size_t index)
 {
     assert(index < BUCKET_SIZE);
-    return get_values(map, bucket) + (index * map->value_size);
+    return get_values(bucket, key_size) + (index * value_size);
 }
 
 /**
  * Get pointer to the overflow pointer within a bucket
+ *
+ * @param bucket Pointer to the bucket
+ * @param key_size Size of keys in bytes
+ * @param value_size Size of values in bytes
+ * @return Pointer to the overflow pointer field
  */
-static inline char **get_overflow_ptr(const hashmap *map, char *bucket)
+static inline char **get_overflow_ptr(char *bucket, size_t key_size, size_t value_size)
 {
-    return (char **)(bucket + 8 + (BUCKET_SIZE * map->key_size) + BUCKET_SIZE * map->value_size);
+    return (char **)(bucket + 8 + (BUCKET_SIZE * key_size) + BUCKET_SIZE * value_size);
 }
 
 /**
  * Get the overflow bucket (returns NULL if no overflow)
+ *
+ * @param bucket Pointer to the bucket
+ * @param key_size Size of keys in bytes
+ * @param value_size Size of values in bytes
+ * @return Pointer to overflow bucket, or NULL if none exists
  */
-static inline char *get_overflow(const hashmap *map, char *bucket)
+static inline char *get_overflow(char *bucket, size_t key_size, size_t value_size)
 {
-    char **overflow_ptr = get_overflow_ptr(map, bucket);
+    char **overflow_ptr = get_overflow_ptr(bucket, key_size, value_size);
     return *overflow_ptr;
 }
 
 /**
  * Set the overflow bucket pointer
+ *
+ * @param bucket Pointer to the bucket
+ * @param overflow Pointer to the overflow bucket to link
+ * @param key_size Size of keys in bytes
+ * @param value_size Size of values in bytes
  */
-static inline void set_overflow(const hashmap *map, char *bucket, char *overflow)
+static inline void set_overflow(char *bucket, char *overflow, size_t key_size, size_t value_size)
 {
-    char **overflow_ptr = get_overflow_ptr(map, bucket);
+    char **overflow_ptr = get_overflow_ptr(bucket, key_size, value_size);
     *overflow_ptr = overflow;
 }
 
 /**
- * Extract the top 8 bits of a hash (for tophash array)
+ * Extract the top 8 bits of a hash value for use in the tophash array.
+ * Returns a value >= 1 (since 0 is reserved for EMPTY).
+ *
+ * @param hash The full 64-bit hash value
+ * @return Top 8 bits, adjusted to be at least 1
  */
 static inline uint8_t top_hash(uint64_t hash)
 {
@@ -136,7 +186,12 @@ static inline uint8_t top_hash(uint64_t hash)
 }
 
 /**
- * Calculate bucket index from hash
+ * Calculate which bucket a hash value maps to.
+ * Uses bitwise AND with (bucket_count - 1) since bucket_count is a power of 2.
+ *
+ * @param hash The full 64-bit hash value
+ * @param bucket_count Number of buckets (must be power of 2)
+ * @return Bucket index in range [0, bucket_count)
  */
 static inline size_t bucket_index(uint64_t hash, size_t bucket_count)
 {
@@ -144,9 +199,17 @@ static inline size_t bucket_index(uint64_t hash, size_t bucket_count)
     return hash & (bucket_count - 1);
 }
 
-static char *alloc_bucket(const hashmap *map)
+/**
+ * Allocate and initialize a single bucket.
+ * All tophash entries are set to EMPTY and overflow pointer is NULL (via calloc).
+ *
+ * @param key_size Size of keys in bytes
+ * @param value_size Size of values in bytes
+ * @return Pointer to newly allocated bucket, or NULL on allocation failure
+ */
+static char *alloc_bucket(size_t key_size, size_t value_size)
 {
-    size_t bsize = calc_bucket_size(map);
+    size_t bsize = calc_bucket_size(key_size, value_size);
     char *bucket = (char *)calloc(1, bsize);
     if (!bucket)
     {
@@ -160,9 +223,17 @@ static char *alloc_bucket(const hashmap *map)
     return bucket;
 }
 
+/**
+ * Allocate and initialize an array of buckets.
+ * All tophash entries in all buckets are set to EMPTY.
+ *
+ * @param map The hashmap (used for key_size and value_size)
+ * @param count Number of buckets to allocate
+ * @return Pointer to newly allocated bucket array, or NULL on allocation failure
+ */
 static char *alloc_buckets(const hashmap *map, size_t count)
 {
-    size_t bsize = calc_bucket_size(map);
+    size_t bsize = calc_bucket_size(map->key_size, map->value_size);
     char *buckets = (char *)calloc(count, bsize);
     if (!buckets)
     {
@@ -170,7 +241,7 @@ static char *alloc_buckets(const hashmap *map, size_t count)
     }
     for (size_t i = 0; i < count; i++)
     {
-        char *bucket = get_bucket(map, buckets, i);
+        char *bucket = get_bucket(buckets, map->key_size, map->value_size, i);
         uint8_t *tophash = get_tophash(bucket);
         for (int j = 0; j < BUCKET_SIZE; j++)
         {
@@ -181,7 +252,14 @@ static char *alloc_buckets(const hashmap *map, size_t count)
 }
 
 /**
- * Create a map and allocate necessary memory
+ * Create a hashmap and allocate necessary memory.
+ * Initializes with INITIAL_BUCKET_COUNT buckets.
+ *
+ * @param key_size Size of keys in bytes (must be > 0)
+ * @param value_size Size of values in bytes (must be > 0)
+ * @param hash Hash function pointer (must not be NULL)
+ * @param equals Equality comparison function pointer (must not be NULL)
+ * @return Pointer to newly created hashmap, or NULL on failure
  */
 hashmap *hashmap_create(size_t key_size, size_t value_size, hash_fn hash, equals_fn equals)
 {
@@ -218,21 +296,30 @@ hashmap *hashmap_create(size_t key_size, size_t value_size, hash_fn hash, equals
 }
 
 /**
- * Free all overflow buckets in a bucket chain
+ * Free all overflow buckets in a chain starting from the given bucket.
+ * Does not free the bucket itself, only its overflow chain.
+ *
+ * @param bucket Pointer to the bucket whose overflow chain should be freed
+ * @param key_size Size of keys in bytes
+ * @param value_size Size of values in bytes
  */
-static void free_overflow_chain(const hashmap *map, char *bucket)
+static void free_overflow_chain(char *bucket, size_t key_size, size_t value_size)
 {
-    char *overflow = get_overflow(map, bucket);
+    char *overflow = get_overflow(bucket, key_size, value_size);
     while (overflow)
     {
-        char *next = get_overflow(map, overflow);
+        char *next = get_overflow(overflow, key_size, value_size);
         free(overflow);
         overflow = next;
     }
 }
 
 /**
- * Destroy a map and free memory
+ * Destroy a hashmap and free all associated memory.
+ * Frees all buckets, overflow chains, and the hashmap structure itself.
+ * Safe to call with NULL pointer (no-op).
+ *
+ * @param map Pointer to the hashmap to destroy
  */
 void hashmap_destroy(hashmap *map)
 {
@@ -244,8 +331,8 @@ void hashmap_destroy(hashmap *map)
     {
         for (size_t i = 0; i < map->bucket_count; i++)
         {
-            char *bucket = get_bucket(map, map->buckets, i);
-            free_overflow_chain(map, bucket);
+            char *bucket = get_bucket(map->buckets, map->key_size, map->value_size, i);
+            free_overflow_chain(bucket, map->key_size, map->value_size);
         }
         free(map->buckets);
     }
@@ -253,8 +340,8 @@ void hashmap_destroy(hashmap *map)
     {
         for (size_t i = 0; i < map->old_bucket_count; i++)
         {
-            char *bucket = get_bucket(map, map->old_buckets, i);
-            free_overflow_chain(map, bucket);
+            char *bucket = get_bucket(map->old_buckets, map->key_size, map->value_size, i);
+            free_overflow_chain(bucket, map->key_size, map->value_size);
         }
         free(map->old_buckets);
     }
@@ -262,7 +349,15 @@ void hashmap_destroy(hashmap *map)
 }
 
 /**
- * Put a key and value pair into the map
+ * Insert or update a key-value pair in the hashmap.
+ * If key exists, its value is updated. Otherwise, a new entry is created.
+ * May allocate overflow buckets if the target bucket is full.
+ * Checks load factor after insertion (growth not yet implemented).
+ *
+ * @param map Pointer to the hashmap
+ * @param key Pointer to the key to insert
+ * @param value Pointer to the value to associate with the key
+ * @return true on success, false on failure (NULL parameters or allocation failure)
  */
 bool hashmap_put(hashmap *map, const void *key, const void *value)
 {
@@ -275,7 +370,7 @@ bool hashmap_put(hashmap *map, const void *key, const void *value)
     uint8_t top = top_hash(hash);
     size_t idx = bucket_index(hash, map->bucket_count);
 
-    char *bucket = get_bucket(map, map->buckets, idx);
+    char *bucket = get_bucket(map->buckets, map->key_size, map->value_size, idx);
     char *insert_bucket = bucket;
     int insert_slot = -1;
 
@@ -305,24 +400,24 @@ bool hashmap_put(hashmap *map, const void *key, const void *value)
                 if (map->equals(existing_key, key, map->key_size))
                 {
                     // Found existing key - update value
-                    char *existing_value = get_value(map, current_bucket, i);
+                    char *existing_value = get_value(current_bucket, map->key_size, map->value_size, i);
                     memcpy(existing_value, value, map->value_size);
                     return true;
                 }
             }
         }
         last_bucket = current_bucket;
-        current_bucket = get_overflow(map, current_bucket);
+        current_bucket = get_overflow(current_bucket, map->key_size, map->value_size);
     }
 
     if (insert_slot == -1)
     {
-        char *overflow = alloc_bucket(map);
+        char *overflow = alloc_bucket(map->key_size, map->value_size);
         if (!overflow)
         {
             return false;
         }
-        set_overflow(map, last_bucket, overflow);
+        set_overflow(last_bucket, overflow, map->key_size, map->value_size);
         insert_bucket = overflow;
         insert_slot = 0;
     }
@@ -332,7 +427,7 @@ bool hashmap_put(hashmap *map, const void *key, const void *value)
     char *key_dest = get_key(insert_bucket, map->key_size, insert_slot);
     memcpy(key_dest, key, map->key_size);
 
-    char *value_dest = get_value(map, insert_bucket, insert_slot);
+    char *value_dest = get_value(insert_bucket, map->key_size, map->value_size, insert_slot);
     memcpy(value_dest, value, map->value_size);
 
     map->count++;
