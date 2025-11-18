@@ -440,3 +440,73 @@ bool hashmap_put(hashmap *map, const void *key, const void *value)
     }
     return true;
 }
+
+/**
+ * Retrieve the value associated with a key from the hashmap.
+ * Searches the appropriate bucket and its overflow chain for the key.
+ *
+ * @param map Pointer to the hashmap
+ * @param key Pointer to the key to search for
+ * @param out_value Pointer to memory where the value will be copied if found
+ * @return true if key was found and value copied to out_value, false otherwise
+ */
+bool hashmap_get(const hashmap *map, const void *key, void *out_value)
+{
+    if (!map || !key || !out_value)
+    {
+        return false;
+    }
+
+    uint64_t hash = map->hash(key, map->key_size);
+    uint8_t top = top_hash(hash);
+    size_t idx = bucket_index(hash, map->bucket_count);
+
+    char *bucket = get_bucket(map->buckets, map->key_size, map->value_size, idx);
+    char *current_bucket = bucket;
+
+    while (current_bucket)
+    {
+        uint8_t *tophash = get_tophash(current_bucket);
+        for (int i = 0; i < BUCKET_SIZE; i++)
+        {
+            if (tophash[i] == EMPTY)
+            {
+                continue;
+            }
+            if (tophash[i] == top)
+            {
+                char *stored_key = get_key(current_bucket, map->key_size, i);
+                if (map->equals(stored_key, key, map->key_size))
+                {
+                    char *stored_value = get_value(current_bucket, map->key_size, map->value_size, i);
+                    memcpy(out_value, stored_value, map->value_size);
+                    return true;
+                }
+            }
+        }
+        current_bucket = get_overflow(current_bucket, map->key_size, map->value_size);
+    }
+    return false;
+}
+
+/**
+ * Remove a key-value pair from the hashmap.
+ * Marks the slot as EMPTY but does not free overflow buckets (to maintain chain integrity).
+ *
+ * @param map Pointer to the hashmap
+ * @param key Pointer to the key to remove
+ * @return true if key was found and removed, false if key not found or NULL parameters
+ */
+bool hashmap_delete(hashmap *map, const void *key)
+{
+    if (!map || !key)
+    {
+        return false;
+    }
+
+    uint64_t hash = map->hash(key, map->key_size);
+    uint8_t top = top_hash(hash);
+    size_t idx = bucket_index(hash, map->bucket_count);
+    char *bucket = get_bucket(map->buckets, map->key_size, map->value_size, idx);
+    char *current_bucket = bucket;
+}
